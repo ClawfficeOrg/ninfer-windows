@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -265,6 +266,35 @@ MaterializedArtifact materialize(const Reader& reader, const MaterializationPlan
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     slots.clear();
     materialize_phase.complete(copied, total);
+
+    // Mapped-host placements are copied through plain host memcpy rather than the overlapped
+    // direct-I/O path above: they never move to VRAM, so there is no transfer stream to overlap
+    // with and no alignment contract to satisfy.
+    for (const HostMappedMaterialization& placement : plan.host_mapped_objects) {
+        const PayloadSpan payload = reader.payload(reader.objects().at(placement.object.index));
+
+        if (payload.data.size() != placement.bytes) {
+            throw ArtifactError("mapped host materialization size does not match artifact payload");
+        }
+        if (placement.bytes == 0 || placement.bytes > static_cast<std::uint64_t>(SIZE_MAX)) {
+            throw ArtifactError("mapped host tensor backing size is invalid");
+        }
+
+        auto mapped = std::make_unique<MappedHostBuffer>(static_cast<std::size_t>(placement.bytes));
+
+        std::memcpy(mapped->data(), payload.data.data(),
+                    static_cast<std::size_t>(placement.bytes));
+
+        auto& object  = out.objects_.at(placement.object.index);
+        object.device = mapped->device_data();
+        object.mapped = std::move(mapped);
+
+        out.stats_.file_bytes = checked_add(out.stats_.file_bytes, placement.bytes,
+                                            "artifact read bytes overflow u64");
+    }
+
+    out.stats_.tensor_count += plan.host_mapped_objects.size();
+
     return out;
 }
 

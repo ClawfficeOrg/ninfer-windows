@@ -106,6 +106,35 @@ private:
     std::size_t size_ = 0;
 };
 
+// Owning page-locked host allocation that is directly addressable by CUDA kernels through the
+// mapped device pointer. Used to keep a tensor's bytes in host memory instead of VRAM while the
+// kernels that read it stay unchanged: they receive device_data(), which the driver translates to
+// the same physical pages over PCIe.
+//
+// This is the fit mechanism for parts whose VRAM cannot hold both the model and the optional
+// components. Reads are far slower than a device-resident tensor, so it is intended for
+// parameters that are read rarely or once per request (for example a Vision backbone that runs
+// only on media input), not for weights touched every decode step.
+class MappedHostBuffer {
+public:
+    explicit MappedHostBuffer(std::size_t size_bytes);
+    ~MappedHostBuffer();
+
+    MappedHostBuffer(const MappedHostBuffer&)            = delete;
+    MappedHostBuffer& operator=(const MappedHostBuffer&) = delete;
+    MappedHostBuffer(MappedHostBuffer&& other) noexcept;
+    MappedHostBuffer& operator=(MappedHostBuffer&& other) noexcept;
+
+    void* data() const noexcept;
+    void* device_data() const noexcept;
+    std::size_t size() const noexcept;
+
+private:
+    void* data_        = nullptr;
+    void* device_data_ = nullptr;
+    std::size_t size_  = 0;
+};
+
 using WorkspaceArena = DeviceArena;
 
 } // namespace ninfer

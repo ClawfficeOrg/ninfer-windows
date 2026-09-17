@@ -48,6 +48,9 @@ private:
     struct ObjectStorage {
         void* device = nullptr;
         std::vector<std::byte> resource;
+        // Backing store for a HostMapped placement. Owns the pinned mapping that `device` points
+        // at, so the pointer stays valid for the artifact's lifetime.
+        std::unique_ptr<MappedHostBuffer> mapped;
     };
 
     std::unique_ptr<DeviceArena> device_arena_;
