@@ -1,5 +1,6 @@
 #include "core/device.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -34,7 +35,36 @@ void destroy_event(cudaEvent_t& event) noexcept {
     }
 }
 
+// Per-device SM count cache. cudaGetDevice / cudaDeviceGetAttribute are cheap but not free, and
+// these values are read on every launch of the affected Ops, so resolve once. The slots are plain
+// atomics: a benign race re-queries the same attribute and stores the same value. Indices are
+// bounded because max_devices is validated to a small positive count at first use.
+constexpr int kMaxCachedDevices = 64;
+std::atomic<std::int32_t> g_sm_count_cache[kMaxCachedDevices] = {};
+
+std::int32_t query_multiprocessor_count(int device) noexcept {
+    if (device < 0 || device >= kMaxCachedDevices) { return 0; }
+
+    const std::int32_t cached = g_sm_count_cache[device].load(std::memory_order_acquire);
+    if (cached != 0) { return cached; }
+
+    int value = 0;
+    if (cudaDeviceGetAttribute(&value, cudaDevAttrMultiProcessorCount, device) != cudaSuccess ||
+        value <= 0) {
+        return 0;
+    }
+
+    g_sm_count_cache[device].store(static_cast<std::int32_t>(value), std::memory_order_release);
+    return static_cast<std::int32_t>(value);
+}
+
 } // namespace
+
+std::int32_t current_device_multiprocessor_count() noexcept {
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess) { return 0; }
+    return query_multiprocessor_count(device);
+}
 
 void cuda_check(cudaError_t err, const char* expr, const char* file, int line) {
     if (err == cudaSuccess) { return; }

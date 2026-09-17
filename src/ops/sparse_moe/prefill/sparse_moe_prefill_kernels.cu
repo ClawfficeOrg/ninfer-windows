@@ -280,9 +280,22 @@ constexpr int kExpertBK                = 64;
 constexpr int kExpertStages            = 2;
 constexpr int kExpertWarps             = 8;
 constexpr int kExpertThreads           = 32 * kExpertWarps;
-constexpr int kRtx5090SmCount          = 170;
-constexpr int kPrefillBlocksPerSm      = 3;
-constexpr int kPrefillPersistentBlocks = kPrefillBlocksPerSm * kRtx5090SmCount;
+// The gate/up and down kernels below run a grid-stride loop over route jobs, so the grid is a
+// throughput knob, not a correctness constraint: it was sized to fill one wave of the 170-SM RTX
+// 5090 at three CTAs per SM (510). Resolved from the bound device so the wave tracks the part in
+// use; the fallback preserves the 5090 value if the SM attribute cannot be read.
+//
+// NOTE (RTX 5070 Ti / GB203, 70 SMs): three CTAs per SM was measured for this kernel's shared
+// memory and register footprint under __launch_bounds__(256, 3) on the 5090. Same architecture
+// family, but re-measure the per-SM residency on this part before trusting the 3.
+constexpr int kPrefillBlocksPerSm         = 3;
+constexpr int kPrefillPersistentFallback  = kPrefillBlocksPerSm * 170;
+
+int prefill_persistent_blocks() noexcept {
+    const std::int32_t sm_count = current_device_multiprocessor_count();
+    if (sm_count <= 0) { return kPrefillPersistentFallback; }
+    return kPrefillBlocksPerSm * static_cast<int>(sm_count);
+}
 
 template <int ExpertWarps, int ExpertBN>
 __global__ __launch_bounds__(ExpertWarps * 32, 3) void sparse_moe_prefill_q4_gate_up_kernel(
@@ -1237,12 +1250,12 @@ void sparse_moe_prefill_launch(const Tensor& x, const SparseMoeWeights& weights,
         if (routed_gate_up_q4) {
             if (wide_plan) {
                 sparse_moe_prefill_q4_gate_up_kernel<8, 64>
-                    <<<kPrefillPersistentBlocks, 8 * 32, 0, stream>>>(
+                    <<<prefill_persistent_blocks(), 8 * 32, 0, stream>>>(
                         input, packed_token, offsets, route_job_experts, route_job_columns,
                         route_job_count, routed_gate_codes, routed_gate_scales, routed_activation);
             } else {
                 sparse_moe_prefill_q4_gate_up_kernel<4, 32>
-                    <<<kPrefillPersistentBlocks, 4 * 32, 0, stream>>>(
+                    <<<prefill_persistent_blocks(), 4 * 32, 0, stream>>>(
                         input, packed_token, offsets, route_job_experts, route_job_columns,
                         route_job_count, routed_gate_codes, routed_gate_scales, routed_activation);
             }
@@ -1276,13 +1289,13 @@ void sparse_moe_prefill_launch(const Tensor& x, const SparseMoeWeights& weights,
         case QType::Q5G64_F16S:
             if (wide_plan) {
                 sparse_moe_prefill_qx_down_kernel<Q5DownMma, 8, 64>
-                    <<<kPrefillPersistentBlocks, 8 * 32, 0, stream>>>(
+                    <<<prefill_persistent_blocks(), 8 * 32, 0, stream>>>(
                         routed_activation, offsets, route_job_experts, route_job_columns,
                         route_job_count, routed_down_codes, routed_down_high, routed_down_scales,
                         grouped_io);
             } else {
                 sparse_moe_prefill_qx_down_kernel<Q5DownMma, 4, 32>
-                    <<<kPrefillPersistentBlocks, 4 * 32, 0, stream>>>(
+                    <<<prefill_persistent_blocks(), 4 * 32, 0, stream>>>(
                         routed_activation, offsets, route_job_experts, route_job_columns,
                         route_job_count, routed_down_codes, routed_down_high, routed_down_scales,
                         grouped_io);
@@ -1291,13 +1304,13 @@ void sparse_moe_prefill_launch(const Tensor& x, const SparseMoeWeights& weights,
         case QType::Q6G64_F16S:
             if (wide_plan) {
                 sparse_moe_prefill_qx_down_kernel<Q6DownMma, 8, 64>
-                    <<<kPrefillPersistentBlocks, 8 * 32, 0, stream>>>(
+                    <<<prefill_persistent_blocks(), 8 * 32, 0, stream>>>(
                         routed_activation, offsets, route_job_experts, route_job_columns,
                         route_job_count, routed_down_codes, routed_down_high, routed_down_scales,
                         grouped_io);
             } else {
                 sparse_moe_prefill_qx_down_kernel<Q6DownMma, 4, 32>
-                    <<<kPrefillPersistentBlocks, 4 * 32, 0, stream>>>(
+                    <<<prefill_persistent_blocks(), 4 * 32, 0, stream>>>(
                         routed_activation, offsets, route_job_experts, route_job_columns,
                         route_job_count, routed_down_codes, routed_down_high, routed_down_scales,
                         grouped_io);

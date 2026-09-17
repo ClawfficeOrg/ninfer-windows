@@ -13,8 +13,21 @@ constexpr int kLargeBlock               = 256;
 constexpr int kFullChunkBlock           = 192;
 constexpr int kSmallBlock               = 128;
 constexpr int kDefaultChunkTargetTokens = 1024;
-// RTX 5090 has 170 SMs and admits six of these 256-thread CTAs per SM.
-constexpr int kLargeBlockWaveCapacity = 1020;
+// The 256-thread variant wins up to one full wave of blocks. On the 170-SM RTX 5090 that wave is
+// six 256-thread CTAs per SM, giving the previously hardcoded 1020. Resolved from the bound
+// device so the crossover tracks the part in use; every branch launches a correct kernel.
+//
+// NOTE (RTX 5070 Ti / GB203): the six-CTAs-per-SM occupancy was measured on the 5090. It is the
+// same architecture family and the same kernel, but re-sweep before trusting the crossover on this
+// part.
+constexpr int kWaveCtasPerSm             = 6;
+constexpr int kLargeBlockWaveFallback    = 1020;
+
+int large_block_wave_capacity() noexcept {
+    const std::int32_t sm_count = current_device_multiprocessor_count();
+    if (sm_count <= 0) { return kLargeBlockWaveFallback; }
+    return sm_count * kWaveCtasPerSm;
+}
 
 template <RopeKernelMode Mode>
 inline constexpr bool kTextMode =
@@ -48,7 +61,7 @@ void launch_fixed(const Tensor& positions, Tensor* q, Tensor* k, cudaStream_t st
     if constexpr (kTextMode<Mode>) {
         if (tokens <= 6) {
             block = (QHeads + KHeads) * 32;
-        } else if (tokens <= kLargeBlockWaveCapacity) {
+        } else if (tokens <= large_block_wave_capacity()) {
             block = kLargeBlock;
         } else if (tokens <= kDefaultChunkTargetTokens) {
             block = kFullChunkBlock;

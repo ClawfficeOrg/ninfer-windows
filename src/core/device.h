@@ -18,6 +18,19 @@ struct DeviceExecutionView {
     std::int32_t multiprocessor_count = 0;
 };
 
+// Device-derived SM count for the CUDA device currently bound to this thread.
+//
+// Launch policies in several Ops (rmsnorm's gated-prefetch crossing, rope's block wave capacity,
+// the GDN chunked-output grid cap, sparse-MoE prefill's persistent grid, and the attention small-T
+// split target) are sized against "how many blocks does one wave hold". Those call sites reach the
+// launcher with a bare cudaStream_t and no DeviceContext, so this lightweight query exists instead
+// of threading an execution view through every public Ops signature.
+//
+// The value is resolved once per device (cudaDeviceGetAttribute) and cached; it never allocates.
+// Returns 0 if the attribute cannot be read, and callers are expected to substitute a conservative
+// default rather than divide by it.
+std::int32_t current_device_multiprocessor_count() noexcept;
+
 struct DeviceContext {
     int device                   = 0;
     cudaStream_t stream          = nullptr;

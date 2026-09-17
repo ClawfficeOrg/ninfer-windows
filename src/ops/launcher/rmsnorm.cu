@@ -14,10 +14,24 @@ namespace {
 // Past this many blocks the gated epilogue gives up its hoisted loads. Below one block per SM the
 // prefetch is the only source of overlap and those kernels run at 0.83x to 0.96x; above it a
 // second resident block already supplies that overlap and only the register cost is left (35 -> 50
-// on the warp kernel), which measures 1.02x to 1.14x. Swept over grid size on both gated shapes
-// the crossing sits between 176 and 192 blocks; this is the 170 SMs of this part, a literal
-// because nothing in the tree queries the device, so it is not portable.
-constexpr std::int64_t kRmsPrefetchBlocks = 170;
+// on the warp kernel), which measures 1.02x to 1.14x.
+//
+// The crossing was swept on the 170-SM RTX 5090, where it sits between 176 and 192 blocks. This is
+// therefore a "one wave of blocks" threshold and is resolved from the bound device's SM count
+// rather than being a fixed literal, so the policy tracks the part it runs on. Both branches
+// compute identical results; only the register/prefetch trade differs.
+//
+// NOTE (RTX 5070 Ti / GB203, 70 SMs): the exact crossing was not re-measured on this part. The
+// derived value keeps the policy in the regime it was designed for, but the 176..192 measurement
+// above belongs to the 5090 and a 5070 Ti sweep may move the constant multiplier.
+constexpr std::int64_t kRmsPrefetchBlocksFallback = 170;
+constexpr std::int64_t kRmsPrefetchBlocksPerSm    = 1;
+
+std::int64_t rms_prefetch_blocks() noexcept {
+    const std::int32_t sm_count = current_device_multiprocessor_count();
+    if (sm_count <= 0) { return kRmsPrefetchBlocksFallback; }
+    return static_cast<std::int64_t>(sm_count) * kRmsPrefetchBlocksPerSm;
+}
 
 template <RmsEpilogue Epilogue>
 void launch_rmsnorm(const Tensor& x, const Tensor& weight, const Tensor* z, Tensor& out,
@@ -74,7 +88,7 @@ void launch_rmsnorm(const Tensor& x, const Tensor& weight, const Tensor* z, Tens
         constexpr int kWarpsPerBlock = kBlock / kWarpSize;
         const auto blocks = static_cast<unsigned int>((rows + kWarpsPerBlock - 1) / kWarpsPerBlock);
         if constexpr (kGateOnGrid) {
-            if (blocks > kRmsPrefetchBlocks) {
+            if (blocks > rms_prefetch_blocks()) {
                 rmsnorm_warp_bf16x2_kernel<Epilogue, kBlock, false><<<blocks, kBlock, 0, stream>>>(
                     reinterpret_cast<const __nv_bfloat162*>(x_bf16),
                     reinterpret_cast<const __nv_bfloat162*>(w_bf16),
@@ -107,7 +121,7 @@ void launch_rmsnorm(const Tensor& x, const Tensor& weight, const Tensor* z, Tens
                 reinterpret_cast<__nv_bfloat162*>(out_bf16), d, rows, eps);
     } else if (aligned2 && d > 3072 && d <= 8192 && d % 1024 == 0) {
         if constexpr (kGateOnGrid) {
-            if (rows > kRmsPrefetchBlocks) {
+            if (rows > rms_prefetch_blocks()) {
                 rmsnorm_cta_bf16x2_kernel<Epilogue, 512, 8, false>
                     <<<static_cast<unsigned int>(rows), 512, 0, stream>>>(
                         reinterpret_cast<const __nv_bfloat162*>(x_bf16),

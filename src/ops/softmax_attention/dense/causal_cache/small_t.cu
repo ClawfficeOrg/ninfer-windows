@@ -17,6 +17,18 @@
 namespace ninfer::ops::detail {
 namespace {
 
+// Resident-CTA budget for one full device wave, used by the batched split-capacity policy below.
+// This was the 170-SM RTX 5090, i.e. one CTA per SM. Resolved from the bound device so the wave
+// tracks the part in use; the fallback preserves the 5090 behaviour when the SM count is
+// unavailable. Only a work-balance target: the split reducer keeps every capacity correct.
+constexpr int kWaveCtasFallback = 170;
+
+int sm_wave_ctas() noexcept {
+    const std::int32_t sm_count = current_device_multiprocessor_count();
+    if (sm_count <= 0) { return kWaveCtasFallback; }
+    return static_cast<int>(sm_count);
+}
+
 // Supplies an upper bound for the device-side active-split policy over one explicit execution
 // envelope. Eager calls normally pass an exact window; graph calls pass their target-private
 // replay interval. The dtype-aware wrapper below adds the measured INT8 specializations.
@@ -226,17 +238,24 @@ std::int32_t causal_attention_split_capacity(std::int32_t q_heads, std::int32_t 
         const int capacity =
             causal_small_t_launch_capacity<CausalD256H24Kv4>(envelope, tokens, cache_storage);
         if (batch_size > 1) {
-            // Keep complete grids within one or two 170-SM waves. Rounding from 160 CTAs
-            // leaves room for the indivisible 4*B group, including B=3/5/6/7.
+            // Keep complete grids within one or two waves of resident CTAs. On the 170-SM RTX
+            // 5090 that was 160 (one wave) and 320 (two waves). Both are throughput targets: the
+            // split-count reducer makes any capacity correct, so deriving the wave from the bound
+            // device only affects how the work is balanced.
+            //
+            // NOTE (RTX 5070 Ti / GB203, 70 SMs): the one-CTA-per-SM equivalence behind 160/320
+            // was measured on the 5090. Re-sweep before trusting it on this part.
+            const int one_wave  = sm_wave_ctas();
+            const int two_waves = 2 * one_wave;
             const bool narrow = tokens <= 5;
-            int target_ctas   = 160;
+            int target_ctas   = one_wave;
             if (cache_storage == KvCacheStorage::BFloat16)
                 target_ctas =
-                    narrow || batch_size >= 5 || envelope.max_visible_keys > 4096 ? 320 : 160;
+                    narrow || batch_size >= 5 || envelope.max_visible_keys > 4096 ? two_waves : one_wave;
             else if (cache_storage == KvCacheStorage::Int8Group64)
-                target_ctas = narrow || envelope.max_visible_keys > 4096 ? 320 : 160;
+                target_ctas = narrow || envelope.max_visible_keys > 4096 ? two_waves : one_wave;
             else if (cache_storage == KvCacheStorage::Nvfp4Group16)
-                target_ctas = narrow ? 320 : 160;
+                target_ctas = narrow ? two_waves : one_wave;
             const int grid_limit = div_up(target_ctas, 4 * batch_size);
             // A split stages at most 64 physical-page IDs. Leave two 64-key pages for
             // key-tile rounding and page alignment at the 262144-key resource limit.
