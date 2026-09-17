@@ -299,6 +299,11 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
             scratch(layout, Variant::gdn_input_projection_record_workspace_capacity_bytes(
                                 plan.weights_profile, phase, batch_size, min_width, max_width));
         } else {
+            // The projected/convolved prefill buffers are only needed through the column
+            // extraction into q/k/v. They are dead before the recurrent GDN stage, so model that
+            // lifetime explicitly instead of carrying the chunk temporaries into the recurrent
+            // workspace peak. Allocation lifetime only; the arithmetic is unchanged.
+            auto conv_scope = layout.scope();
             (void)workspace_recipe::gdn_prefill_conv<TextConfig>(layout, last);
             scratch(layout, Variant::gdn_input_projection_workspace_capacity_bytes(
                                 plan.weights_profile, phase, first, last));

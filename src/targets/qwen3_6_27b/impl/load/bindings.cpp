@@ -598,8 +598,12 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
         .format = NumericFormat::W8G32_F16S};
     out.mtp.final_norm = bind_mtp("mtp/final_norm", NumericFormat::BF16, {5120});
 
+    // Vision weights are only read while encoding media, never on a text decode step, so they are
+    // held in mapped host memory instead of VRAM. On a 16 GiB card this is what lets the text
+    // weights and a long-context KV pool coexist with Vision enabled at all; the cost is PCIe
+    // latency on image/video prefill only.
     const artifact::TensorPlacement vision_placement =
-        features.vision ? artifact::TensorPlacement::Device
+        features.vision ? artifact::TensorPlacement::HostMapped
                         : artifact::TensorPlacement::ValidateOnly;
     out.vision_backbone     = qwen3_6::bind_vision_backbone(binder, vision_placement);
     out.vision_merger_input = qwen3_6::bind_vision_merger_input(binder, vision_placement);
