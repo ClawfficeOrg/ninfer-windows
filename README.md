@@ -1,5 +1,8 @@
 # NInfer-windows
 
+> Windows/Linux fork. Runs on a single RTX 5070 Ti. Adds Ornith 1.5 9B support.
+> Ornith 1.5 9B benchmarks incoming.
+
 > Selected checkpoints. Maximum single-GPU inference performance.
 
 NInfer-windows is a Windows 11 port of [Neroued/ninfer](https://github.com/Neroued/ninfer), a from-scratch C++/CUDA inference 
@@ -88,7 +91,8 @@ reuse, Host resume, eviction, shared prefixes, scheduling boundaries, and multim
 ## Performance
 
 Published measurements use an RTX 5090. [Performance](docs/performance.md) records the exact
-benchmark profiles and methodology.
+benchmark profiles and methodology. Ornith 1.5 9B benchmarks on the RTX 5070 Ti are
+incoming — same tables as below, measured on this fork.
 
 ### Concurrent MTP3 decode
 
