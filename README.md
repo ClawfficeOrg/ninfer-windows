@@ -107,6 +107,21 @@ intervals whose actual decode batch equaled the configured concurrency.
 | Qwen3.6-35B-A3B `groupwise-int` | 593.0 / 67.2% | 877.7 / 68.2% | 1,166.0 / 69.8% | 1,313.8 / 67.3% | 2.22× |
 | Qwen3.8-27B `nvfp4` | 143.8 / 48.9% | 267.6 / 48.1% | 461.1 / 45.8% | 766.6 / 46.0% | 5.33× |
 
+### Ornith 1.5 9B on RTX 5070 Ti (this fork)
+
+Concurrent serving through one persistent `ninfer-serve` instance: INT8
+group-64 KV, CUDA Graphs, MTP with 3 draft tokens plus the optimized
+proposal head, 4,096-token context, 32,768-token KV capacity, and a
+~1,953-token prompt with 256 generated tokens per request
+(`tools/bench_concurrency_long.py`). Values are aggregate committed
+decode throughput across complete waves.
+
+| Model profile | C=1 tok/s | C=2 tok/s | C=4 tok/s | C=8 tok/s | C8 / C1 |
+|---|---:|---:|---:|---:|---:|
+| Ornith 1.5 9B `groupwise-int` | 75.4 | 94.7 | 125.4 | 193.1 | 2.56× |
+
+Single-request serving numbers for Ornith 1.5 9B are still incoming.
+
 ### Single-request serving
 
 The serial serving corpus used INT8 group-64 KV, CUDA Graphs, a 1,024-token prefill chunk, and five
