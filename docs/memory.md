@@ -52,6 +52,24 @@ Op shapes (checkout from fork, local untouched since merge-base
 14. q5 GEMV shape → fork kernels.
 15. q6 linear shape → fork dispatch. Then engine ready.
 
+## Benchmarks (2026-09-18, commit 1dd2e24f)
+
+Concurrent serving, MTP3 draft-3 + lm-head-draft, int8 KV, 1953-token
+prompt, 256 gen/req (`tools/bench_concurrency_long.py`):
+
+| C | tok/s | C8/C1 |
+|---|---:|---:|
+| 1 | 75.4 | — |
+| 2 | 94.7 | — |
+| 4 | 125.4 | — |
+| 8 | 193.1 | 2.56× |
+
+Fixes along the way: GDN replay fold geometry_24, w8 linear/pair 9b
+shapes, q4 K64 GEMV schedule. Gotcha: bench script piped server stdout
+without reading → pipe filled, server blocked on wave 2+. Now DEVNULL.
+MTP acceptance low at temp 0 (~1-8%); numbers are committed decode tput.
+Single-request serving numbers still open.
+
 ## Open / not done
 
 - Changes uncommitted. Decide: commit on win5070ti-port?
